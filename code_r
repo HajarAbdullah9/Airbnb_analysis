@@ -1,0 +1,250 @@
+library(tidyverse)
+library(e1071)
+library(dplyr)
+
+df <-read.csv('C:/Users/LENOVO/Desktop/slides/AML/ASSIGNM/final/Airbnb_.csv')
+
+colSums(is.na(df))
+
+
+
+df <- df %>% mutate(`Reviews.Per.Month` = replace(`Reviews.Per.Month`,is.na(`Reviews.Per.Month`),mean(`Reviews.Per.Month`,na.rm=T)))
+
+
+
+
+# Min- Max Normalization
+normalize <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x)))
+}
+
+df.norm <-as.data.frame(lapply(df[c(8,10,11,12,13,14,15)], normalize))
+ds <- cbind(df.norm, df$Price)
+str(ds)
+colSums(is.na(ds))
+
+dff = cbind(df$`Room.Type`,df$`Neighbourhood.Group` ,ds)
+
+colnames(dff) = c("Room.Type","Neighbourhood.Group", "Reviews.Per.Month","Availability.365","Calculated.Host.Listings.Count","Latitude","Longitude","Minimum.Nights","Number.Of.Reviews","price")
+unique(dff$`Room.Type`)
+
+dff$`Room.Type`[dff$`Room.Type`=="."]=NA
+dff$`Room.Type`[dff$`Room.Type`=="Entire home |apt"]="Entire home/apt"
+unique(dff$`Room.Type`)
+table(dff$`Room.Type`)
+colSums(is.na(dff))
+
+dff <- dff %>% mutate(`Room.Type` = replace(`Room.Type`,is.na(`Room.Type`),"Entire home/apt"))
+
+
+dff$`Room.Type` = factor(dff$`Room.Type`,
+                         levels = c('Entire home/apt', 'Private room', 'Shared room'),
+                         labels = c(1, 2, 3))
+
+quartiles <- quantile(dff$price, probs=c(.25, .75), na.rm = FALSE)
+IQR <- IQR(dff$price)
+
+Lower <- quartiles[1] - 1.5*IQR
+Upper <- quartiles[2] + 1.5*IQR 
+
+data_no_outlier <- subset(dff, dff$price > Lower & dff$price < Upper)
+dff = data_no_outlier
+
+
+dff$`Neighbourhood.Group` = factor(dff$`Neighbourhood.Group`,
+                         levels = c("North Region","Central Region","East Region","West Region","North-East Region"),
+                         labels = c(1, 2, 3,4,5))
+str(dff)
+dff = dff[,-6]
+dff = dff[,-6]
+
+#############################################################
+# Exploratory data analysis
+
+library(leaflet)
+leaflet(df) %>% addTiles %>%
+  addCircleMarkers(
+    stroke = FALSE, 
+    fillOpacity = 0.05
+  )
+
+correlationMatrix <- round(cor(dff[,c(-1,-2)]),2)
+library(pheatmap)
+pheatmap(correlationMatrix,cluster_rows = F,cluster_cols = F,display_numbers = T )
+
+library(caTools)
+set.seed(0)
+split = sample.split(dff$price,SplitRatio = 0.8)
+training_set = subset(dff,split == TRUE)
+test_set = subset(dff, split == FALSE)
+
+
+
+library(rpart)
+library(rpart.plot)
+
+"Can generate different types of trees with rpart
+Default split is with Gini index"
+tree = rpart(price~ ., data=training_set)
+tree
+
+# Now we predict and evaluate the performance of the trained tree model 
+Predict = predict(tree, test_set)
+# Now examine the values of Predict. These are the class probabilities
+Predict
+s=data.frame(Predict, test_set$price) 
+
+# Evaluation Measure for Numeric TV
+library("caret")
+library(Metrics)
+summary(Predict)
+RMSE(Predict, test_set$price)
+MAE(Predict, test_set$price)
+# MSE = RMSE^2
+mae(Predict, test_set$price)
+V=varImp(tree)
+ggplot2::ggplot(V, aes(x=reorder(rownames(V),Overall), y=Overall)) +
+  geom_point( color="blue", size=4, alpha=0.6)+
+  geom_segment( aes(x=rownames(V), xend=rownames(V), y=0, yend=Overall), 
+                color='skyblue') +
+  xlab('Variable')+
+  ylab('Overall Importance')+
+  theme_light() +
+  coord_flip() +ggtitle("Features Importance")
+
+  library(reshape2)
+data_long <- melt(s)  
+ggplot(data_long,aes(x = variable, y = value))+geom_boxplot(fill='skyblue1')+xlab("Actual vs predicted")+ggtitle("Predection vs Actual boxplot")
+boxplot(test_set$price,Predict, xlab = "Actual  Predicted",fill = c("yellow", "orange"))
+
+
+
+# Split with entropy information
+tree = rpart(price~ ., data=training_set, method="anova", parms=list(split="information"))
+
+# Now we predict and evaluate the performance of the trained tree model 
+Predict = predict(tree, test_set)
+# Now examine the values of Predict. These are the class probabilities
+Predict
+plot(test_set$price,Predict)
+s=data.frame(Predict, test_set$price) 
+
+# Evaluation Measure for Numeric TV
+library("caret")
+library(Metrics)
+summary(Predict)
+RMSE(Predict, test_set$price)
+MAE(Predict, test_set$price)
+# MSE = RMSE^2
+mae(Predict, test_set$price)
+V=varImp(tree)
+ggplot2::ggplot(V, aes(x=reorder(rownames(V),Overall), y=Overall)) +
+  geom_point( color="blue", size=4, alpha=0.6)+
+  geom_segment( aes(x=rownames(V), xend=rownames(V), y=0, yend=Overall), 
+                color='skyblue') +
+  xlab('Variable')+
+  ylab('Overall Importance')+
+  theme_light() +
+  coord_flip() +ggtitle("Features Importance")
+
+library(reshape2)
+data_long <- melt(s)  
+ggplot(data_long,aes(x = variable, y = value))+geom_boxplot(fill='skyblue1')+xlab("Actual vs predicted")+ggtitle("Predection vs Actual boxplot")
+boxplot(test_set$price,Predict, xlab = "Actual               Predicted",fill = c("yellow", "orange"))
+
+
+
+# ~~~~~~~~~~~~~~~~~~~~   SVM model using the Linear model  ~~~~~~~~~~~~~~~~~~~~~
+svm_linear = svm (price~ ., data=training_set, kernel = "linear")
+summary (svm_linear)
+pred2 = predict (svm_linear, test_set)
+pred2
+table(pred2, test_set$Profit)
+library(caret)
+summary(pred2)
+RMSE(pred2, test_set$price) # Root mean squared error
+MAE(pred2, test_set$price) # Mean Absolute Error
+
+hist(pred2,breaks = 20,col=rgb(0,0,1,1/4),main = "Actual vs Predicted")
+hist(test_set$price,breaks = 20,col=rgb(1,0,0,1/4),add=T)
+
+# ~~~~~~~~~~~~~~~~~~~~   SVM model using polynomial kernal  ~~~~~~~~~~~~~~~~~~~~~
+svm_polynomial = svm (price~ ., data=training_set, kernel = "poly")
+summary (svm_polynomial)
+
+pred4 = predict (svm_polynomial, test_set)
+pred4
+
+library(caret)
+summary(pred4)
+RMSE(pred4, test_set$price) # Root mean squared error
+MAE(pred4, test_set$price) # Mean Absolute Error
+
+hist(pred4,breaks = 20,col=rgb(0,0,1,1/4),main = "Actual vs Predicted")
+hist(test_set$price,breaks = 20,col=rgb(1,0,0,1/4),add=T)
+
+
+
+
+
+
+# Fitting Multiple Linear Regression to the Training set
+regressor1 = lm(price~ ., data=training_set)
+summary(regressor1)
+
+V= varImp(regressor1)
+ggplot2::ggplot(V, aes(x=reorder(rownames(V),Overall), y=Overall)) +
+  geom_point( color="blue", size=4, alpha=0.6)+
+  geom_segment( aes(x=rownames(V), xend=rownames(V), y=0, yend=Overall), 
+                color='skyblue') +
+  xlab('Variable')+
+  ylab('Overall Importance')+
+  theme_light() +
+  coord_flip()
+
+
+pred = predict (regressor1, test_set)
+pred
+
+library(caret)
+summary(pred)
+RMSE(pred, test_set$price) # Root mean squared error
+MAE(pred, test_set$price) # Mean Absolute Error
+
+
+# Alternative method to get the model parameters
+library(jtools)
+summ(regressor1, confint = TRUE)
+
+# Predicting the Test set results
+y_pred = predict(regressor1, newdata = test_set)
+y_pred
+s=data.frame(y_pred, test_set$price) # Comparing the predicted and actual value
+
+
+library(caret)
+summary(y_pred)
+RMSE(y_pred, test_set$Profit) # Root mean squared error
+MAE(y_pred, test_set$Profit) # Mean Absolute Error
+
+library(reshape2)
+data_long <- melt(s)  
+ggplot(data_long,aes(x = variable, y = value))+geom_boxplot(fill='skyblue1')+xlab("Actual vs predicted")+ggtitle("Predection vs Actual boxplot")
+
+
+#define intercept-only model
+intercept_only <- lm(price ~ 1, data=dff)
+
+#define model with all predictors
+all <- lm(price ~ ., data=dff)
+
+#perform forward stepwise regression
+forward <- step(intercept_only, direction='forward', scope=formula(all), trace=0)
+
+#view results of forward stepwise regression
+forward$anova
+#view final model
+forward$coefficients
+
+
+
